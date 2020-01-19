@@ -1,0 +1,14 @@
+{
+    "name": "mqtt-auth-sync",
+    "version": "1.0.0",
+    "description": "Backend server for synchronizing postgreSQL db with Redis",
+    "main": "sync.js",
+    "author": "David Horvath <horvath.david987@gmail.com>",
+    "license": "MIT",
+    "dependencies": {
+      "body-parser": "^1.19.0",
+      "pg": "^7.17.1",
+      "redis": "^2.8.0"
+    }
+  }
+  

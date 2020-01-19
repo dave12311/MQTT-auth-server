@@ -8,6 +8,4 @@ RUN npm install
 
 RUN npm install -g nodemon
 
-EXPOSE 3000
-
-ENTRYPOINT ["nodemon", "./src/jwt.js"]
+ENTRYPOINT ["nodemon", "./src/sync.js"]

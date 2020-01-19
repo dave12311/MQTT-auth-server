@@ -1,14 +1,16 @@
 {
   "name": "mqtt-auth-server",
   "version": "1.0.0",
-  "description": "Backend server for JWT authentication for MQTT go-auth",
-  "main": "jwt.js",
+  "description": "Backend server for JWT and password authentication for MQTT go-auth",
+  "main": "auth.js",
   "author": "David Horvath <horvath.david987@gmail.com>",
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^8.5.1",
     "body-parser": "^1.19.0",
     "express": "^4.17.1",
-    "pg": "^7.17.1"
+    "pg": "^7.17.1",
+    "redis": "^2.8.0"
   }
 }

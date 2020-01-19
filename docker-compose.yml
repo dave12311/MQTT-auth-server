@@ -1,5 +1,17 @@
 version: "3.7"
 services:
+    mosquitto:
+        build: ./mosquitto
+        image: mqtt-auth:mosquitto
+        container_name: auth_mosquitto
+        restart: always
+        depends_on:
+            - node-auth
+        volumes:
+            - ./mosquitto/conf:/etc/mosquitto
+        ports:
+            - 1883:1883
+            - 8883:8883
     db:
         image: postgres:11-alpine
         container_name: auth_db
@@ -16,24 +28,28 @@ services:
             - 8080:8080
         depends_on:
             - db
-    mosquitto:
-        build: ./mosquitto
-        image: mqtt-auth:mosquitto
-        container_name: auth_mosquitto
-        restart: always
-        depends_on:
-            - node
-        volumes:
-            - ./mosquitto/conf:/etc/mosquitto
-        ports:
-            - 1883:1883
-            - 8883:8883
-    node:
-        build: ./node
-        image: mqtt-auth:node
-        container_name: auth_node
+    node-auth:
+        build: ./node-auth
+        image: mqtt-auth:node-auth
+        container_name: auth_node-auth
         restart: always
         depends_on:
             - db
+            - redis
         volumes:
-            - ./node/src:/usr/src/mqtt-auth/src
+            - ./node-auth/src:/usr/src/mqtt-auth/src
+    node-sync:
+        build: ./node-sync
+        image: mqtt-auth:node-sync
+        container_name: auth_node-sync
+        restart: always
+        depends_on:
+            - redis
+        volumes:
+            - ./node-sync/src:/usr/src/mqtt-auth/src
+    redis:
+        image: redis:alpine
+        container_name: auth_redis
+        restart: always
+        volumes:
+            - ./redisdata:/data

@@ -1,7 +1,9 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken')
 const pg = require('pg');
+const redis = require('redis');
 
 var app = express();
 
@@ -69,7 +71,7 @@ function auth_topic(req, res) {
             return pool
             .query(subquery, [req.body.topic, req.body.username])
             .then(subresult => {
-                if(subresult.rowCount > 0 && subresult.rows[0].acc >= req.body.acc) {
+                if(subresult.rowCount > 0 && (subresult.rows[0].acc & req.body.acc) != 0) {
                     console.log('User ' + req.body.username + ' connected to protected topic ' + req.body.topic + ' with ACC ' + req.body.acc);
                     res.sendStatus(200);
                 } else {
