@@ -1,0 +1,39 @@
+version: "3.7"
+services:
+    db:
+        image: postgres:11-alpine
+        container_name: auth_db
+        restart: always
+        environment:
+            POSTGRES_PASSWORD: example
+        volumes:
+            - "/home/dave/Documents/Programming/MQTT-auth-server/db:/var/lib/postgresql/data"
+    adminer:
+        image: adminer:latest
+        container_name: auth_adminer
+        restart: always
+        ports:
+            - 8080:8080
+        depends_on:
+            - db
+    mosquitto:
+        build: ./mosquitto
+        image: mqtt-auth:mosquitto
+        container_name: auth_mosquitto
+        restart: always
+        depends_on:
+            - node
+        volumes:
+            - ./mosquitto/conf:/etc/mosquitto
+        ports:
+            - 1883:1883
+            - 8883:8883
+    node:
+        build: ./node
+        image: mqtt-auth:node
+        container_name: auth_node
+        restart: always
+        depends_on:
+            - db
+        volumes:
+            - ./node/src:/usr/src/mqtt-auth/src
