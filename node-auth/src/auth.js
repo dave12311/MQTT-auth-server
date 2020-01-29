@@ -7,6 +7,9 @@ const redis = require('redis');
 
 var app = express();
 
+var redisClient = redis.createClient({host: 'redis'});
+const exp = 20;
+
 // Postgres settings
 var pool = new pg.Pool({
     user: 'postgres',
@@ -41,10 +44,68 @@ app.use('/su', auth_su);
 
 function auth_user(req, res) {
     if(req.mqtt.jwt === true) {
-        auth_user_jwt(req, res);
+        auth_from_cache(req, res, auth_user_jwt, verify_jwt);
     } else {
-        auth_user_http(req, res);
+        auth_from_cache(req, res, auth_user_http, verify_bcrypt);
     }
+}
+
+function auth_from_cache(req, res, queryFunction, verifyFunction) {
+    var db;
+    if(req.mqtt.jwt === false) {
+        db = 0;
+    } else {
+        db = 1
+    }
+
+    redisClient.select(db, () => {
+        redisClient.get(req.mqtt.username, (err, reply) => {
+            if(err) {
+                console.log(err.stack);
+                queryFunction(req, res, null);
+            } else if(reply) {
+                console.log('Cached credentials');
+                verifyFunction(req, res, reply);
+            } else {
+                console.log('No cached credentials');
+                queryFunction(req, res, null);
+            }
+        });
+    });
+}
+
+function verify_bcrypt(req, res, hash) {
+    return bcrypt
+    .compare(req.body.password, hash)
+    .then(comp => {
+        if(comp === true) {
+            console.log('User ' + req.body.username + ' connected using HTTP');
+            res.sendStatus(200);
+            redisClient.set(req.body.username, hash, 'EX', exp);
+        } else {
+            console.log('User ' + req.body.username + ' tried to connect with an incorrect password');
+            res.sendStatus(401);
+        }
+    })
+    .catch(err => {
+        console.log(err.stack);
+        res.sendStatus(500);
+    });
+}
+
+function verify_jwt(req, res, pubkey) {
+    jwt.verify(req.body.username, pubkey, (err, verified) => {
+        if(err) {
+            console.log('User ' + req.mqtt.username + ' tried to connect using an invalid JWT');
+            res.sendStatus(401);
+        } else if(verified){
+            console.log('User ' + req.mqtt.username + ' connected using JWT');
+            res.sendStatus(200);
+            redisClient.set(req.mqtt.username, pubkey, 'EX', exp);
+        } else {
+            res.sendStatus(500);
+        }
+    });
 }
 
 function auth_user_http(req, res) {
@@ -52,22 +113,8 @@ function auth_user_http(req, res) {
     pool
     .query(query, [req.body.username])
     .then(result => {
-        if(result.rowCount === 1) {
-            return bcrypt
-            .compare(req.body.password, result.rows[0].password)
-            .then(comp => {
-                if(comp === true) {
-                    console.log('User ' + req.body.username + ' connected using HTTP');
-                    res.sendStatus(200);
-                } else {
-                    console.log('User ' + req.body.username + ' tried to connect with an incorrect password');
-                    res.sendStatus(401);
-                }
-            })
-            .catch(err => {
-                console.log(err.stack);
-                res.sendStatus(500);
-            });
+        if(result.rowCount >= 1) {
+            verify_bcrypt(req, res, result.rows[0].password);
         } else {
             console.log('Unregistered user ' + req.body.username + ' tried to connect');
             res.sendStatus(401);
@@ -84,16 +131,8 @@ function auth_user_jwt(req, res) {
     pool
    .query(query, [req.mqtt.username])
     .then(result => {
-        if(result.rowCount === 1) {
-            jwt.verify(req.body.username, result.rows[0].pubkey, function(err, verified) {
-                if(err) {
-                    console.log('User ' + verified.sub + ' tried to connect using an invalid JWT');
-                    res.sendStatus(401);
-                } else {
-                    console.log('User ' + verified.sub + ' connected using JWT');
-                    res.sendStatus(200);
-                }
-            });
+        if(result.rowCount >= 1) {
+            verify_jwt(req, res, result.rows[0].pubkey);
         } else {
             console.log('Unregistered user ' + req.mqtt.username + ' tried to connect using JWT');
             res.sendStatus(401);
