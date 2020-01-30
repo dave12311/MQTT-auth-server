@@ -8,8 +8,13 @@ const redis = require('redis');
 var app = express();
 
 var redisClient = redis.createClient({host: 'redis'});
+// Redis databases:
+// 0: password
+// 1: JWT
+// 2: SU
+// 3: ACL
 
-//Cache TTL in seconds
+// Redis cache TTL in seconds
 const exp = 20;
 
 // Postgres settings
@@ -56,6 +61,7 @@ function auth_user_from_cache(req, res, db, queryFunction, verifyFunction) {
     redisClient.select(db, () => {
         redisClient.get(req.mqtt.username, (err, reply) => {
             if(err) {
+                console.log('Cache error');
                 console.log(err.stack);
                 queryFunction(req, res, null);
             } else if(reply) {
@@ -76,11 +82,11 @@ function verify_bcrypt(req, res, hash) {
         if(comp === true) {
             console.log('User ' + req.body.username + ' connected using HTTP');
             res.sendStatus(200);
-            redisClient.set(req.body.username, hash, 'EX', exp);
         } else {
             console.log('User ' + req.body.username + ' tried to connect with an incorrect password');
             res.sendStatus(401);
         }
+        redisClient.set(req.body.username, hash, 'EX', exp);
     })
     .catch(err => {
         console.log(err.stack);
@@ -96,10 +102,10 @@ function verify_jwt(req, res, pubkey) {
         } else if(verified){
             console.log('User ' + req.mqtt.username + ' connected using JWT');
             res.sendStatus(200);
-            redisClient.set(req.mqtt.username, pubkey, 'EX', exp);
         } else {
             res.sendStatus(500);
         }
+        redisClient.set(req.mqtt.username, pubkey, 'EX', exp);
     });
 }
 
@@ -166,6 +172,29 @@ function auth_topic(req, res) {
 }
 
 function auth_su(req, res) {
+    redisClient.select(2, () => {
+        redisClient.get(req.mqtt.username, (err, reply) => {
+            if(err) {
+                console.log('Cache error');
+                console.log(err.stack);
+                query_su(req, res);
+            } else if(reply) {
+                console.log('Used cached SU');
+                if(reply === true) {
+                    console.log('User ' + req.mqtt.username + ' used a topic as SU');
+                    res.sendStatus(200);
+                } else {
+                    res.sendStatus(401);
+                }
+            } else {
+                console.log('No cached SU');
+                query_su(req, res);
+            }
+        });
+    });
+}
+
+function query_su(req, res) {
     const query = 'SELECT EXISTS(SELECT 1 FROM mqtt_auth.su WHERE username = $1)';
     pool
     .query(query, [req.mqtt.username])
@@ -173,8 +202,10 @@ function auth_su(req, res) {
         if(result.rows[0].exists === true) {
             console.log('User ' + req.mqtt.username + ' used a topic as SU');
             res.sendStatus(200);
+            redisClient.set(req.mqtt.username, true, 'EX', exp);
         } else {
             res.sendStatus(401);
+            redisClient.set(req.mqtt.username, false, 'EX', exp);
         }
     })
     .catch(err => {
