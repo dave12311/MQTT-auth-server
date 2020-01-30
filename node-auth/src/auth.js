@@ -8,6 +8,8 @@ const redis = require('redis');
 var app = express();
 
 var redisClient = redis.createClient({host: 'redis'});
+
+//Cache TTL in seconds
 const exp = 20;
 
 // Postgres settings
@@ -44,27 +46,20 @@ app.use('/su', auth_su);
 
 function auth_user(req, res) {
     if(req.mqtt.jwt === true) {
-        auth_from_cache(req, res, auth_user_jwt, verify_jwt);
+        auth_user_from_cache(req, res, 1, query_user_jwt, verify_jwt);
     } else {
-        auth_from_cache(req, res, auth_user_http, verify_bcrypt);
+        auth_user_from_cache(req, res, 0, query_user_http, verify_bcrypt);
     }
 }
 
-function auth_from_cache(req, res, queryFunction, verifyFunction) {
-    var db;
-    if(req.mqtt.jwt === false) {
-        db = 0;
-    } else {
-        db = 1
-    }
-
+function auth_user_from_cache(req, res, db, queryFunction, verifyFunction) {
     redisClient.select(db, () => {
         redisClient.get(req.mqtt.username, (err, reply) => {
             if(err) {
                 console.log(err.stack);
                 queryFunction(req, res, null);
             } else if(reply) {
-                console.log('Cached credentials');
+                console.log('Used cached credentials');
                 verifyFunction(req, res, reply);
             } else {
                 console.log('No cached credentials');
@@ -108,7 +103,7 @@ function verify_jwt(req, res, pubkey) {
     });
 }
 
-function auth_user_http(req, res) {
+function query_user_http(req, res) {
     const query = 'SELECT password FROM mqtt_auth.http_auth WHERE username = $1';
     pool
     .query(query, [req.body.username])
@@ -126,7 +121,7 @@ function auth_user_http(req, res) {
     });
 }
 
-function auth_user_jwt(req, res) {
+function query_user_jwt(req, res) {
     const query = 'SELECT pubkey FROM mqtt_auth.jwt_auth WHERE username = $1';
     pool
    .query(query, [req.mqtt.username])
