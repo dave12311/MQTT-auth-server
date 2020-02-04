@@ -1,7 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken')
+const jwt = require('jsonwebtoken');
 const pg = require('pg');
 const redis = require('redis');
 
@@ -41,7 +41,7 @@ var usernameParser = (req, res, next) => {
     }
 
     next();
-}
+};
 
 app.use(usernameParser);
 
@@ -49,19 +49,21 @@ app.use('/user', auth_user);
 app.use('/acl', auth_topic);
 app.use('/su', auth_su);
 
+// User authentication
+
 function auth_user(req, res) {
     if(req.mqtt.jwt === true) {
         auth_user_from_cache(req, res, 1, query_user_jwt, verify_jwt);
     } else {
         auth_user_from_cache(req, res, 0, query_user_http, verify_bcrypt);
     }
-}
+};
 
 function auth_user_from_cache(req, res, db, queryFunction, verifyFunction) {
     redisClient.select(db, () => {
         redisClient.get(req.mqtt.username, (err, reply) => {
             if(err) {
-                console.log('Cache error');
+                console.log('Credential cache error');
                 console.log(err.stack);
                 queryFunction(req, res, null);
             } else if(reply) {
@@ -73,9 +75,9 @@ function auth_user_from_cache(req, res, db, queryFunction, verifyFunction) {
             }
         });
     });
-}
+};
 
-function verify_bcrypt(req, res, hash) {
+async function verify_bcrypt(req, res, hash) {
     return bcrypt
     .compare(req.body.password, hash)
     .then(comp => {
@@ -92,7 +94,7 @@ function verify_bcrypt(req, res, hash) {
         console.log(err.stack);
         res.sendStatus(500);
     });
-}
+};
 
 function verify_jwt(req, res, pubkey) {
     jwt.verify(req.body.username, pubkey, (err, verified) => {
@@ -107,11 +109,11 @@ function verify_jwt(req, res, pubkey) {
         }
         redisClient.set(req.mqtt.username, pubkey, 'EX', exp);
     });
-}
+};
 
-function query_user_http(req, res) {
+async function query_user_http(req, res) {
     const query = 'SELECT password FROM mqtt_auth.http_auth WHERE username = $1';
-    pool
+    return pool
     .query(query, [req.body.username])
     .then(result => {
         if(result.rowCount >= 1) {
@@ -125,11 +127,11 @@ function query_user_http(req, res) {
         console.log(err.stack);
         res.sendStatus(500);
     });
-}
+};
 
-function query_user_jwt(req, res) {
+async function query_user_jwt(req, res) {
     const query = 'SELECT pubkey FROM mqtt_auth.jwt_auth WHERE username = $1';
-    pool
+    return pool
    .query(query, [req.mqtt.username])
     .then(result => {
         if(result.rowCount >= 1) {
@@ -142,9 +144,35 @@ function query_user_jwt(req, res) {
         console.log(err.stack);
         res.sendStatus(500);
     });
-}
+};
+
+// ACL verification
 
 function auth_topic(req, res) {
+    redisClient.select(3, () => {
+        redisClient.get(req.mqtt.username + req.body.topic, (err, reply) => {
+            if(err) {
+                console.log('ACL cache error');
+                console.log(err.stack);
+                query_topic(req, res);
+            } else if(reply) {
+                console.log('Used cached ACL');
+                if((reply & req.body.acc) != 0) {
+                    console.log('User ' + req.mqtt.username + ' used protected topic ' + req.body.topic + ' (ACC ' + reply.toString(2) + ') with ACC ' + req.body.acc.toString(2));
+                    res.sendStatus(200);
+                } else {
+                    console.log('User ' + req.mqtt.username + ' tried to use protected topic ' + req.body.topic + ' (ACC ' + reply.toString(2) + ') with ACC ' + req.body.acc.toString(2));
+                    res.sendStatus(401);
+                }
+            } else {
+                console.log('No cached ACL');
+                query_topic(req, res);
+            }
+        });
+    });
+};
+
+async function query_topic(req, res) {
     const query = 'SELECT CASE WHEN username = $1 THEN acc END FROM mqtt_auth.acl WHERE topic = $2';
     pool
     .query(query, [req.mqtt.username, req.body.topic])
@@ -156,12 +184,15 @@ function auth_topic(req, res) {
             if(result.rows[0].case == null) {
                 console.log('User ' + req.mqtt.username + ' tried to use protected topic ' + req.body.topic);
                 res.sendStatus(401);
+                redisClient.set(req.mqtt.username + req.body.topic, 0, 'EX', exp);
             } else if((result.rows[0].case & req.body.acc) != 0) {
                 console.log('User ' + req.mqtt.username + ' used protected topic ' + req.body.topic + ' (ACC ' + result.rows[0].case.toString(2) + ') with ACC ' + req.body.acc.toString(2));
                 res.sendStatus(200);
+                redisClient.set(req.mqtt.username + req.body.topic, result.rows[0].case, 'EX', exp);
             } else {
                 console.log('User ' + req.mqtt.username + ' tried to use protected topic ' + req.body.topic + ' (ACC ' + result.rows[0].case.toString(2) + ') with ACC ' + req.body.acc.toString(2));
                 res.sendStatus(401);
+                redisClient.set(req.mqtt.username + req.body.topic, result.rows[0].case, 'EX', exp);
             }
         }
     })
@@ -169,18 +200,20 @@ function auth_topic(req, res) {
         console.log(err.stack);
         res.sendStatus(500);
     });
-}
+};
+
+// Superuser authentication
 
 function auth_su(req, res) {
     redisClient.select(2, () => {
         redisClient.get(req.mqtt.username, (err, reply) => {
             if(err) {
-                console.log('Cache error');
+                console.log('SU cache error');
                 console.log(err.stack);
                 query_su(req, res);
             } else if(reply) {
                 console.log('Used cached SU');
-                if(reply === true) {
+                if(reply === 'true') {
                     console.log('User ' + req.mqtt.username + ' used a topic as SU');
                     res.sendStatus(200);
                 } else {
@@ -192,11 +225,11 @@ function auth_su(req, res) {
             }
         });
     });
-}
+};
 
-function query_su(req, res) {
+async function query_su(req, res) {
     const query = 'SELECT EXISTS(SELECT 1 FROM mqtt_auth.su WHERE username = $1)';
-    pool
+    return pool
     .query(query, [req.mqtt.username])
     .then(result => {
         if(result.rows[0].exists === true) {
@@ -212,7 +245,7 @@ function query_su(req, res) {
         console.log(err.stack);
         res.sendStatus(500);
     });
-}
+};
 
 app.listen(3000);
 console.log("Auth server started.");
