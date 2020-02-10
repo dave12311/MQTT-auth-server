@@ -68,7 +68,7 @@ function auth_user_from_cache(req, res, db, queryFunction, verifyFunction) {
                 queryFunction(req, res, null);
             } else if(reply) {
                 console.log('Used cached credentials');
-                verifyFunction(req, res, reply);
+                verifyFunction(req, res, JSON.parse(reply));
             } else {
                 console.log('No cached credentials');
                 queryFunction(req, res, null);
@@ -77,47 +77,60 @@ function auth_user_from_cache(req, res, db, queryFunction, verifyFunction) {
     });
 };
 
-async function verify_bcrypt(req, res, hash) {
-    return bcrypt
-    .compare(req.body.password, hash)
-    .then(comp => {
-        if(comp === true) {
-            console.log('User ' + req.body.username + ' connected using HTTP');
-            res.sendStatus(200);
-        } else {
-            console.log('User ' + req.body.username + ' tried to connect with an incorrect password');
-            res.sendStatus(401);
-        }
-        redisClient.set(req.body.username, hash, 'EX', exp);
-    })
-    .catch(err => {
-        console.log(err.stack);
-        res.sendStatus(500);
-    });
+async function verify_bcrypt(req, res, data) {
+    var dateNow = new Date();
+    if((data.expiry == null || Date.parse(data.expiry) >= dateNow) && data.credits > 0) {
+        return bcrypt
+        .compare(req.body.password, data.password)
+        .then(comp => {
+            if(comp === true) {
+                console.log('User ' + req.body.username + ' connected using HTTP');
+                res.sendStatus(200);
+            } else {
+                console.log('User ' + req.body.username + ' tried to connect with an incorrect password');
+                res.sendStatus(401);
+            }
+            redisClient.set(req.body.username, JSON.stringify(data), 'EX', exp);
+        })
+        .catch(err => {
+            console.log(err.stack);
+            res.sendStatus(500);
+        });
+    } else {
+        console.log('User ' + req.mqtt.username + ' has an expired account or no credits');
+        res.sendStatus(401);
+    }
+    
 };
 
-function verify_jwt(req, res, pubkey) {
-    jwt.verify(req.body.username, pubkey, (err, verified) => {
-        if(err) {
-            console.log('User ' + req.mqtt.username + ' tried to connect using an invalid JWT');
-            res.sendStatus(401);
-        } else if(verified){
-            console.log('User ' + req.mqtt.username + ' connected using JWT');
-            res.sendStatus(200);
-        } else {
-            res.sendStatus(500);
-        }
-        redisClient.set(req.mqtt.username, pubkey, 'EX', exp);
-    });
+function verify_jwt(req, res, data) {
+    var dateNow = new Date();
+    if((data.expiry == null || Date.parse(data.expiry) >= dateNow) && data.credits > 0) {
+        jwt.verify(req.body.username, data.pubkey, (err, verified) => {
+            if(err) {
+                console.log('User ' + req.mqtt.username + ' tried to connect using an invalid JWT');
+                res.sendStatus(401);
+            } else if(verified){
+                console.log('User ' + req.mqtt.username + ' connected using JWT');
+                res.sendStatus(200);
+            } else {
+                res.sendStatus(500);
+            }
+            redisClient.set(req.mqtt.username, JSON.stringify(data), 'EX', exp);
+        });
+    } else {
+        console.log('User ' + req.mqtt.username + ' has an expired account or no credits');
+        res.sendStatus(401);
+    }
 };
 
 async function query_user_http(req, res) {
-    const query = 'SELECT password FROM mqtt_auth.http_auth WHERE username = $1';
+    const query = 'SELECT password, credits, expiry FROM mqtt_auth.http_auth WHERE username = $1';
     return pool
     .query(query, [req.body.username])
     .then(result => {
         if(result.rowCount >= 1) {
-            verify_bcrypt(req, res, result.rows[0].password);
+            verify_bcrypt(req, res, result.rows[0]);
         } else {
             console.log('Unregistered user ' + req.body.username + ' tried to connect');
             res.sendStatus(401);
@@ -130,12 +143,12 @@ async function query_user_http(req, res) {
 };
 
 async function query_user_jwt(req, res) {
-    const query = 'SELECT pubkey FROM mqtt_auth.jwt_auth WHERE username = $1';
+    const query = 'SELECT pubkey, credits, expiry FROM mqtt_auth.jwt_auth WHERE username = $1';
     return pool
-   .query(query, [req.mqtt.username])
+    .query(query, [req.mqtt.username])
     .then(result => {
         if(result.rowCount >= 1) {
-            verify_jwt(req, res, result.rows[0].pubkey);
+            verify_jwt(req, res, result.rows[0]);
         } else {
             console.log('Unregistered user ' + req.mqtt.username + ' tried to connect using JWT');
             res.sendStatus(401);
