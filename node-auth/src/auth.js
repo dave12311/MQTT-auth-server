@@ -19,10 +19,10 @@ const exp = 20;
 
 // Postgres settings
 var pool = new pg.Pool({
-    user: 'postgres',
+    user: process.env.POSTGRES_USER,
     host: 'db',
     database: 'postgres',
-    password: 'example',
+    password: process.env.POSTGRES_PASSWORD,
     max: 10,
     idleTimeoutMillis: 30000
 });
@@ -100,7 +100,6 @@ async function verify_bcrypt(req, res, data) {
         console.log('User ' + req.mqtt.username + ' has an expired account or no credits');
         res.sendStatus(401);
     }
-    
 };
 
 function verify_jwt(req, res, data) {

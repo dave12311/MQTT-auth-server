@@ -16,8 +16,8 @@ services:
         image: postgres:11-alpine
         container_name: auth_db
         restart: always
-        environment:
-            POSTGRES_PASSWORD: example
+        env_file:
+            - ./credentials.env
         volumes:
             - "/home/dave/Documents/Programming/MQTT-auth-server/db:/var/lib/postgresql/data"
     adminer:
@@ -38,6 +38,8 @@ services:
             - redis
         volumes:
             - ./node-auth/src:/usr/src/mqtt-auth/src
+        env_file:
+            - ./credentials.env
     node-sync:
         build: ./node-sync
         image: mqtt-auth:node-sync
